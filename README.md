@@ -1,12 +1,16 @@
 # AP30 Library
 
+![AP30 Library showing six albums on an SD card, each flagged with its cover problems](docs/screenshot.png)
+
+**Open it: https://guillochon.github.io/ap30-library/** (Chrome or Edge on a desktop computer)
+
 Tools for keeping the music library on a **Hidizs AP30** (and similar Rockchip RKnano players) in a shape its firmware handles well.
 
 The stock firmware is slow to start tracks and often fails to show album art when covers are large, progressive JPEGs, PNGs or greyscale images, or differ from track to track. These tools rewrite only the artwork, never the audio, so every album has one small cover the player can decode.
 
 ## ap30-library.html
 
-A single-file web page for managing the SD card. Download it and open it in **Chrome or Edge** on a desktop computer. It uses the File System Access API, so it needs no install and uploads nothing.
+A single-file web page for managing the SD card. Use it from [GitHub Pages](https://guillochon.github.io/ap30-library/), or download the file and open it in **Chrome or Edge** on a desktop computer. It uses the File System Access API, so it needs no install and uploads nothing.
 
 - **Open SD card…**: choose the card's drive (or a folder on it, if Chrome won't open the drive itself).
 - **Format check**: tells FAT32 from exFAT by how the card stores file times (FAT32 rounds to 2 s, exFAT to 10 ms). The page can't format the card; the *SD card format* panel lists the commands for Windows, macOS and Linux.
