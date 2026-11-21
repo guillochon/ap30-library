@@ -684,14 +684,17 @@ async function importFolder(src, destParent, tick) {
 }
 
 // ---------- card scanning and format detection ----------
+// FAT32 stores modification times to 2 seconds, exFAT to 10 ms. The probes are empty files created
+// directly, which is fast: writing data would go through Chrome's swap file and download checks, which
+// take seconds per file on a USB drive.
 async function detectFormat(dir) {
   const times = [];
   for (let i = 0; i < 3; i++) {
     const name = `.ap30-probe-${i}.tmp`;
-    await writeFile(dir, name, 'x');
-    times.push((await (await dir.getFileHandle(name)).getFile()).lastModified);
+    const fh = await dir.getFileHandle(name, { create: true });
+    times.push((await fh.getFile()).lastModified);
     await dir.removeEntry(name);
-    await sleep(123 + 97 * i);
+    await sleep(15);                // land the next probe in a different 10 ms step on exFAT
   }
   if (times.every(t => t % 2000 === 0)) return 'FAT32';
   if (times.every(t => t % 10 === 0)) return 'exFAT';
