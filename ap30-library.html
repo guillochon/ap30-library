@@ -1,0 +1,911 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AP30 Library</title>
+<style>
+:root {
+  --bg: #f5f4f1; --panel: #ffffff; --ink: #1c1b19; --muted: #6a6761; --line: #e2dfd9;
+  --accent: #2f5bd3; --accent-ink: #ffffff; --chip: #eeece7;
+  --ok: #1d7347; --ok-bg: #e2f2e9; --warn: #8f5400; --warn-bg: #fbeed6; --bad: #b3261e; --bad-bg: #fbe3e1;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131313; --panel: #1c1c1c; --ink: #ecebe8; --muted: #a09d97; --line: #2f2f2f;
+    --accent: #86a5ff; --accent-ink: #0c0c0c; --chip: #272727;
+    --ok: #74d4a3; --ok-bg: #15301f; --warn: #f0b85e; --warn-bg: #33270f; --bad: #ff8b81; --bad-bg: #3b1714;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131313; --panel: #1c1c1c; --ink: #ecebe8; --muted: #a09d97; --line: #2f2f2f;
+  --accent: #86a5ff; --accent-ink: #0c0c0c; --chip: #272727;
+  --ok: #74d4a3; --ok-bg: #15301f; --warn: #f0b85e; --warn-bg: #33270f; --bad: #ff8b81; --bad-bg: #3b1714;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 140px; }
+header.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+.sub { color: var(--muted); margin: 2px 0 0; }
+button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 7px 13px; border-radius: 8px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+button.danger { color: var(--bad); }
+button:disabled { opacity: .45; cursor: default; }
+button.small { padding: 4px 10px; font-size: 13px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+.banner { border-radius: var(--radius); padding: 12px 14px; margin-bottom: 14px; }
+.banner.bad { background: var(--bad-bg); color: var(--bad); }
+.stats { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; }
+.stat b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); margin-left: 4px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.chip { display: inline-block; padding: 2px 9px; border-radius: 999px; background: var(--chip); color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.chip.ok { background: var(--ok-bg); color: var(--ok); }
+.chip.warn { background: var(--warn-bg); color: var(--warn); }
+.chip.bad { background: var(--bad-bg); color: var(--bad); }
+details { margin-top: 12px; }
+details > summary { cursor: pointer; color: var(--muted); }
+details .body { padding: 10px 2px 2px; }
+code, pre { font: 12.5px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; }
+pre { background: var(--chip); padding: 9px 11px; border-radius: 8px; overflow-x: auto; margin: 6px 0 10px; }
+.settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 20px; }
+.settings label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 13px; }
+.settings label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--ink); }
+input[type=number], input[type=text] { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); }
+.listhead { display: flex; align-items: center; justify-content: space-between; margin: 22px 0 8px; gap: 10px; flex-wrap: wrap; }
+.listhead h2 { font-size: 15px; margin: 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; padding: 5px 11px; font-size: 13px; }
+.seg button.on { background: var(--chip); font-weight: 600; }
+.album { display: grid; grid-template-columns: 64px 1fr auto; gap: 14px; align-items: center; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 8px; }
+.thumb { width: 64px; height: 64px; border-radius: 6px; background: var(--chip); object-fit: cover; display: block; }
+.album .name { font-weight: 600; overflow-wrap: anywhere; }
+.album .path { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.album .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.album .acts { display: flex; gap: 6px; }
+.empty { color: var(--muted); text-align: center; padding: 30px 0; }
+.dock { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--line); }
+.dock .inner { max-width: 1040px; margin: 0 auto; padding: 10px 16px; }
+.progress { display: flex; align-items: center; gap: 12px; }
+.bar { flex: 1; height: 6px; background: var(--chip); border-radius: 3px; overflow: hidden; }
+.bar > div { height: 100%; width: 0; background: var(--accent); transition: width .15s; }
+#jobLabel { font-size: 13px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+#log { max-height: 96px; overflow-y: auto; overflow-x: hidden; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, Consolas, monospace; color: var(--muted); margin-top: 6px; }
+#log .bad { color: var(--bad); } #log .ok { color: var(--ok); }
+@media (max-width: 600px) {
+  .album { grid-template-columns: 48px 1fr; }
+  .thumb { width: 48px; height: 48px; }
+  .album .acts { grid-column: 1 / -1; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <div>
+      <h1>AP30 Library</h1>
+      <p class="sub">Manage the music on a Hidizs AP30's SD card. Covers are cleaned up as music goes in.</p>
+    </div>
+    <div class="toolbar" style="margin:0">
+      <button id="reconnectBtn" hidden></button>
+      <button id="openBtn" class="primary">Open SD card…</button>
+    </div>
+  </header>
+
+  <div id="noApi" class="banner bad" hidden>This page needs Chrome or Edge on a desktop computer. Other browsers can't read and write folders on your drives.</div>
+
+  <section id="intro" class="panel">
+    <p style="margin-top:0"><b>Getting started:</b> plug the AP30 in (or put its microSD card in a card reader), click <b>Open SD card…</b> and choose the card's drive, for example <code>F:</code>. Chrome will ask to allow editing; say yes.</p>
+    <p style="margin-bottom:0">If Chrome won't open the drive itself, make a folder such as <code>Music</code> on the card and choose that folder instead. Everything happens on your computer; nothing is uploaded.</p>
+  </section>
+
+  <section id="cardPanel" class="panel" hidden>
+    <div class="stats">
+      <div class="stat"><b id="cardName">–</b></div>
+      <div class="stat" id="fmtStat"><span class="chip">checking format…</span></div>
+      <div class="stat"><b id="nAlbums">0</b><span>albums</span></div>
+      <div class="stat"><b id="nTracks">0</b><span>tracks</span></div>
+      <div class="stat"><b id="nSize">0</b><span>of music</span></div>
+    </div>
+    <div class="toolbar">
+      <button id="addBtn" class="primary">Add music…</button>
+      <button id="fixAllBtn">Fix all covers</button>
+      <button id="junkBtn" hidden>Remove junk files</button>
+      <button id="rescanBtn">Rescan</button>
+    </div>
+
+    <details id="fmtHelp">
+      <summary>SD card format</summary>
+      <div class="body">
+        <p id="fmtText" style="margin-top:0"></p>
+        <p>Browsers can't format drives, so formatting is done with a separate tool. <b>Formatting erases everything on the card.</b> Copy back your music with <b>Add music…</b> afterwards.</p>
+        <p><b>Windows</b>: Windows only makes FAT32 on cards up to 32 GB. For bigger cards use Ridgecrop's free <a href="http://ridgecrop.co.uk/index.htm?fat32format.htm" target="_blank" rel="noopener">fat32format</a> in an administrator terminal, with the card's drive letter:</p>
+        <pre>fat32format -c64 F:</pre>
+        <p><b>macOS</b>: find the card's disk number with <code>diskutil list</code>, then:</p>
+        <pre>diskutil eraseDisk FAT32 AP30 MBRFormat /dev/diskN</pre>
+        <p><b>Linux</b>: with the card's partition unmounted:</p>
+        <pre>sudo mkfs.vfat -F 32 -s 64 -n AP30 /dev/sdX1</pre>
+        <p style="margin-bottom:0">The format is detected from how the card stores file times (FAT32 rounds them to 2 seconds, exFAT to 10 ms), so the page can tell FAT32 from exFAT but not the cluster size.</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>Settings</summary>
+      <div class="body settings">
+        <label>Largest cover size (pixels)<input id="setSize" type="number" min="100" max="1500" step="10"></label>
+        <label>JPEG quality (50–100)<input id="setQuality" type="number" min="50" max="100" step="1"></label>
+        <label>Copy new music into this card folder<input id="setDest" type="text" placeholder="(top of the card)"></label>
+        <label class="check"><input id="setSkip" type="checkbox"> Skip tracks already on the card</label>
+        <label class="check"><input id="setExtras" type="checkbox"> Also copy other files (.cue, .log, .txt…)</label>
+      </div>
+    </details>
+  </section>
+
+  <section id="listSection" hidden>
+    <div class="listhead">
+      <h2 id="listTitle">Albums</h2>
+      <div class="seg" id="filterSeg">
+        <button data-f="all" class="on">All</button>
+        <button data-f="issues">Needs fixing</button>
+      </div>
+    </div>
+    <div id="albums"></div>
+  </section>
+</main>
+
+<div class="dock">
+  <div class="inner">
+    <div class="progress">
+      <span id="jobLabel">Ready</span>
+      <div class="bar"><div id="barFill"></div></div>
+      <button id="cancelBtn" class="small" hidden>Cancel</button>
+    </div>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+// ---------- constants ----------
+const AUDIO_EXT = new Set(['flac', 'mp3', 'wav', 'ape', 'dsf', 'dff', 'm4a', 'aac', 'ogg', 'opus', 'wma', 'aif', 'aiff', 'alac']);
+// Formats the stock firmware has decoders for (from the codec modules in the firmware image).
+const PLAYABLE_EXT = new Set(['flac', 'mp3', 'wav', 'ape', 'dsf', 'dff', 'm4a', 'aac', 'ogg', 'wma', 'alac']);
+const ART_EXT = new Set(['flac', 'mp3']);         // formats whose embedded cover this page can rewrite
+const IMG_EXT = new Set(['jpg', 'jpeg', 'png']);
+const JUNK_FILE = /^(\._.*|\.DS_Store|Thumbs\.db|desktop\.ini|.*\.crswap)$/i;
+const JUNK_DIR = /^(\.Spotlight-V100|\.Trashes|\.fseventsd|\.TemporaryItems)$/i;
+const SKIP_DIR = /^(System Volume Information|\$RECYCLE\.BIN)$/i;
+const CANCEL = new Error('cancelled');
+
+// ---------- settings ----------
+const settings = { size: 500, quality: 88, dest: '', skip: true, extras: false };
+try { Object.assign(settings, JSON.parse(localStorage.getItem('ap30-settings') || '{}')); } catch {}
+function saveSettings() { try { localStorage.setItem('ap30-settings', JSON.stringify(settings)); } catch {} }
+
+// ---------- small helpers ----------
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const extOf = n => { const i = n.lastIndexOf('.'); return i < 0 ? '' : n.slice(i + 1).toLowerCase(); };
+const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+const joinPath = (a, b) => a ? a + ' / ' + b : b;
+const u24 = (b, o) => (b[o] << 16) | (b[o + 1] << 8) | b[o + 2];
+const u32 = (b, o) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
+const syncsafe = (b, o) => (b[o] << 21) | (b[o + 1] << 14) | (b[o + 2] << 7) | b[o + 3];
+const ascii = (b, o, n) => String.fromCharCode(...b.subarray(o, o + n));
+const latin1Bytes = s => Uint8Array.from(s, c => c.charCodeAt(0) & 0xff);
+function be32(n) { return new Uint8Array([n >>> 24 & 255, n >>> 16 & 255, n >>> 8 & 255, n & 255]); }
+function syncsafeBytes(n) { return new Uint8Array([n >>> 21 & 127, n >>> 14 & 127, n >>> 7 & 127, n & 127]); }
+function concat(parts) {
+  const arrs = parts.map(p => p instanceof Uint8Array ? p : Uint8Array.from(p));
+  const out = new Uint8Array(arrs.reduce((s, a) => s + a.length, 0));
+  let o = 0; for (const a of arrs) { out.set(a, o); o += a.length; }
+  return out;
+}
+async function readBytes(file, start, end) { return new Uint8Array(await file.slice(start, end).arrayBuffer()); }
+function fnv(bytes) { let h = 0x811c9dc5; for (let i = 0; i < bytes.length; i++) { h ^= bytes[i]; h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(16); }
+const sigOf = (len, sample) => len + ':' + fnv(sample);
+function fmtBytes(n) { const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + ' ' + u[i]; }
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === 'class') e.className = v; else if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else if (v != null) e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) e.append(k);
+  return e;
+}
+
+// ---------- image probing ----------
+// Reads type, size, progressive flag and colour components from the start of an image file.
+function probeImage(b) {
+  if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) { i++; continue; }
+      const m = b[i + 1];
+      if (m === 0xff) { i++; continue; }
+      if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+      const len = (b[i + 2] << 8) | b[i + 3];
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
+        return { type: 'jpeg', sof: m, progressive: [0xc2, 0xc6, 0xca, 0xce].includes(m),
+                 h: (b[i + 5] << 8) | b[i + 6], w: (b[i + 7] << 8) | b[i + 8], comps: b[i + 9] };
+      }
+      i += 2 + len;
+    }
+    return { type: 'jpeg', unknown: true };
+  }
+  if (b.length > 25 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) {
+    const ct = b[25];
+    return { type: 'png', w: u32(b, 16), h: u32(b, 20), gray: ct === 0 || ct === 4 };
+  }
+  return { type: 'other' };
+}
+const isColor = p => (p.type === 'jpeg' && p.comps === 3) || (p.type === 'png' && !p.gray);
+// A cover the AP30 should handle: baseline RGB JPEG no bigger than the size setting.
+const isGoodCover = p => p && p.type === 'jpeg' && !p.unknown && !p.progressive && (p.sof === 0xc0 || p.sof === 0xc1)
+  && p.comps === 3 && Math.max(p.w, p.h) <= settings.size;
+
+// ---------- FLAC ----------
+async function parseFlac(file) {
+  const first = await readBytes(file, 0, Math.min(file.size, 131072));
+  const at = async (start, len) => start + len <= first.length ? first.subarray(start, start + len) : readBytes(file, start, start + len);
+  let off = 0;
+  if (ascii(first, 0, 3) === 'ID3') off = 10 + syncsafe(first, 6);   // a stray ID3 tag in front; dropped on rewrite
+  if (ascii(await at(off, 4), 0, 4) !== 'fLaC') throw new Error('not a FLAC file');
+  off += 4;
+  const blocks = [];
+  for (;;) {
+    const h = await at(off, 4);
+    const last = h[0] & 0x80, type = h[0] & 0x7f, len = u24(h, 1);
+    blocks.push({ type, start: off + 4, len });
+    off += 4 + len;
+    if (last) break;
+    if (off > file.size || blocks.length > 1000) throw new Error('damaged FLAC metadata');
+  }
+  if (!blocks.length || blocks[0].type !== 0) throw new Error('FLAC without STREAMINFO');
+  return { blocks, audioOffset: off };
+}
+async function readFlacPicture(file, blk) {
+  let head = await readBytes(file, blk.start, blk.start + Math.min(blk.len, 4096));
+  const need = n => n > head.length;
+  if (need(8) || need(8 + u32(head, 4) + 4)) head = await readBytes(file, blk.start, blk.start + blk.len);
+  const picType = u32(head, 0), mimeLen = u32(head, 4);
+  const mime = ascii(head, 8, mimeLen);
+  let o = 8 + mimeLen;
+  const descLen = u32(head, o);
+  if (need(o + 4 + descLen + 20)) head = await readBytes(file, blk.start, blk.start + blk.len);
+  o += 4 + descLen + 16;               // skip description, width, height, depth, colours
+  const len = u32(head, o); o += 4;
+  const dataStart = blk.start + o;
+  let sample = await readBytes(file, dataStart, dataStart + Math.min(len, 65536));
+  let probe = probeImage(sample);
+  if (probe.unknown && len > 65536) probe = probeImage(await readBytes(file, dataStart, dataStart + len));
+  return { picType, mime, len, probe, sig: sigOf(len, sample), blob: () => file.slice(dataStart, dataStart + len, mime || 'image/jpeg') };
+}
+function flacPictureBlock(cover) {
+  const mime = latin1Bytes('image/jpeg');
+  return concat([be32(3), be32(mime.length), mime, be32(0), be32(cover.w), be32(cover.h), be32(24), be32(0), be32(cover.bytes.length), cover.bytes]);
+}
+function flacHeader(type, len, last) { return new Uint8Array([(last ? 0x80 : 0) | type, len >>> 16 & 255, len >>> 8 & 255, len & 255]); }
+async function rebuildFlac(file, cover) {
+  const p = await parseFlac(file);
+  const parts = [latin1Bytes('fLaC')];
+  for (const b of p.blocks) {
+    if (b.type === 6 || b.type === 1) continue;           // old pictures and padding go
+    parts.push(flacHeader(b.type, b.len, false), file.slice(b.start, b.start + b.len));
+  }
+  if (cover) { const pic = flacPictureBlock(cover); parts.push(flacHeader(6, pic.length, false), pic); }
+  const PAD = 8192;
+  parts.push(flacHeader(1, PAD, true), new Uint8Array(PAD), file.slice(p.audioOffset));
+  return new Blob(parts, { type: 'audio/flac' });
+}
+
+// ---------- MP3 / ID3v2 ----------
+async function parseId3(file) {
+  const h = await readBytes(file, 0, 10);
+  if (ascii(h, 0, 3) !== 'ID3') return { present: false, ver: 3, frames: [], audioOffset: 0 };
+  const ver = h[3], flags = h[5], size = syncsafe(h, 6);
+  const audioOffset = 10 + size + ((flags & 0x10) ? 10 : 0);
+  if (ver < 3 || ver > 4) return { unsupported: 'ID3v2.' + ver + ' tag' };
+  if (flags & 0x80) return { unsupported: 'unsynchronised ID3 tag' };
+  const tag = await readBytes(file, 10, 10 + size);
+  let i = 0;
+  if (flags & 0x40) i = ver === 3 ? u32(tag, 0) + 4 : syncsafe(tag, 0);
+  const frames = [];
+  while (i + 10 <= tag.length) {
+    const id = ascii(tag, i, 4);
+    if (!/^[A-Z0-9]{4}$/.test(id)) break;
+    const fsz = ver === 4 ? syncsafe(tag, i + 4) : u32(tag, i + 4);
+    if (i + 10 + fsz > tag.length) break;
+    frames.push({ id, flags: (tag[i + 8] << 8) | tag[i + 9], raw: tag.subarray(i, i + 10 + fsz), body: tag.subarray(i + 10, i + 10 + fsz) });
+    i += 10 + fsz;
+  }
+  return { present: true, ver, frames, audioOffset };
+}
+function readApic(frame, ver) {
+  const blocked = ver === 3 ? (frame.flags & 0x00c0) : (frame.flags & 0x000f);
+  if (blocked) return null;            // compressed / encrypted / unsynchronised frame: can't read the picture
+  const b = frame.body;
+  const enc = b[0];
+  let o = 1; while (o < b.length && b[o] !== 0) o++;
+  const mime = ascii(b, 1, o - 1); o++;
+  const picType = b[o++];
+  if (enc === 1 || enc === 2) { while (o + 1 < b.length && !(b[o] === 0 && b[o + 1] === 0)) o += 2; o += 2; }
+  else { while (o < b.length && b[o] !== 0) o++; o++; }
+  const data = b.subarray(o);
+  const sample = data.subarray(0, 65536);
+  return { picType, mime, len: data.length, probe: probeImage(data), sig: sigOf(data.length, sample), blob: () => new Blob([data], { type: mime || 'image/jpeg' }) };
+}
+async function rebuildMp3(file, cover) {
+  const t = await parseId3(file);
+  if (t.unsupported) return null;
+  const ver = t.ver;
+  const kept = t.frames.filter(f => f.id !== 'APIC').map(f => f.raw);
+  const parts = [...kept];
+  if (cover) {
+    const body = concat([[0], latin1Bytes('image/jpeg'), [0, 3, 0], cover.bytes]);
+    const fh = concat([latin1Bytes('APIC'), ver === 4 ? syncsafeBytes(body.length) : be32(body.length), [0, 0]]);
+    parts.push(fh, body);
+  }
+  const frames = concat(parts);
+  const PAD = 1024;
+  const hdr = concat([latin1Bytes('ID3'), [ver, 0, 0], syncsafeBytes(frames.length + PAD)]);
+  return new Blob([hdr, frames, new Uint8Array(PAD), file.slice(t.audioOffset)], { type: 'audio/mpeg' });
+}
+
+// ---------- reading what's in an album ----------
+async function readTrackArt(file, ext) {
+  try {
+    if (ext === 'flac') {
+      const p = await parseFlac(file);
+      const pics = [];
+      for (const b of p.blocks) if (b.type === 6) pics.push(await readFlacPicture(file, b));
+      return { kind: 'flac', pictures: pics };
+    }
+    if (ext === 'mp3') {
+      const t = await parseId3(file);
+      if (t.unsupported) return { kind: 'mp3', error: t.unsupported, pictures: [] };
+      const apics = t.frames.filter(f => f.id === 'APIC');
+      const pics = apics.map(f => readApic(f, t.ver)).filter(Boolean);
+      return { kind: 'mp3', pictures: pics, unreadable: apics.length - pics.length };
+    }
+    return { kind: 'other', pictures: [] };
+  } catch (e) {
+    return { kind: ext, error: e.message, pictures: [] };
+  }
+}
+// album: { dir, tracks: [{name, handle, ext}], images: [{name, handle}] } -> fills in art, sizes and issues
+async function inspectAlbum(album, onTrack) {
+  album.bytes = 0;
+  for (const t of album.tracks) {
+    checkCancel();
+    const f = await t.handle.getFile();
+    t.size = f.size; album.bytes += f.size;
+    t.art = await readTrackArt(f, t.ext);
+    onTrack && onTrack(t);
+  }
+  for (const im of album.images) {
+    const f = await im.handle.getFile();
+    im.size = f.size;
+    let sample = await readBytes(f, 0, Math.min(f.size, 65536));
+    im.probe = probeImage(sample);
+    if (im.probe.unknown && f.size > 65536) im.probe = probeImage(await readBytes(f, 0, f.size));
+    im.sig = sigOf(f.size, sample);
+    im.blob = () => f;
+  }
+  album.status = albumStatus(album);
+  return album;
+}
+function frontPicture(pics) { return pics.find(p => p.picType === 3) || pics.find(p => p.picType === 0) || pics[0]; }
+function albumStatus(a) {
+  const S = settings.size, issues = [], notes = [];
+  const capable = a.tracks.filter(t => t.art && ART_EXT.has(t.art.kind) && !t.art.error);
+  const broken = a.tracks.filter(t => t.art && t.art.error);
+  const others = a.tracks.filter(t => t.art && !ART_EXT.has(t.art.kind) && !t.art.error && PLAYABLE_EXT.has(t.ext));
+  const pics = capable.flatMap(t => t.art.pictures);
+  const none = capable.filter(t => !t.art.pictures.length).length;
+  const multi = capable.filter(t => t.art.pictures.length > 1).length;
+  const hasArt = pics.length > 0 || a.images.some(i => i.probe && i.probe.type !== 'other');
+  if (!hasArt) issues.push({ text: 'no artwork found', level: 'bad' });
+  if (none && hasArt) issues.push({ text: `${none} of ${capable.length} tracks have no embedded cover`, level: 'warn' });
+  if (multi) issues.push({ text: `${multi} tracks have several pictures`, level: 'warn' });
+  if (pics.some(p => p.probe.progressive)) issues.push({ text: 'progressive JPEG covers', level: 'warn' });
+  if (pics.some(p => p.probe.type === 'png')) issues.push({ text: 'PNG covers', level: 'warn' });
+  if (pics.some(p => p.probe.type === 'jpeg' && p.probe.comps && p.probe.comps !== 3)) issues.push({ text: 'greyscale or CMYK covers', level: 'warn' });
+  const biggest = pics.reduce((m, p) => Math.max(m, p.probe.w || 0, p.probe.h || 0), 0);
+  if (biggest > S) issues.push({ text: `covers up to ${biggest} px (limit ${S})`, level: 'warn' });
+  const sigs = new Set(capable.filter(t => t.art.pictures.length).map(t => frontPicture(t.art.pictures).sig));
+  if (sigs.size > 1) issues.push({ text: 'tracks have different covers', level: 'warn' });
+  if (hasArt) {
+    if (!a.images.length) issues.push({ text: 'no cover.jpg', level: 'warn' });
+    else if (a.images.length > 1 || a.images[0].name !== 'cover.jpg') issues.push({ text: 'extra or misnamed folder images', level: 'warn' });
+    else if (!isGoodCover(a.images[0].probe)) issues.push({ text: 'cover.jpg needs re-encoding', level: 'warn' });
+  }
+  const unplayable = a.tracks.filter(t => !PLAYABLE_EXT.has(t.ext));
+  if (unplayable.length) issues.push({ text: `${unplayable.length} ${[...new Set(unplayable.map(t => t.ext.toUpperCase()))].join('/')} files the AP30 can't play`, level: 'bad' });
+  if (broken.length) issues.push({ text: `${broken.length} tracks could not be read (${broken[0].art.error})`, level: 'bad' });
+  if (others.length) notes.push(`${others.length} ${[...new Set(others.map(t => t.ext.toUpperCase()))].join('/')} files use cover.jpg only`);
+  return { issues, notes, fixable: hasArt && issues.length > 0 };
+}
+
+// ---------- cover selection and encoding ----------
+async function decodeImage(blob) {
+  try { return await createImageBitmap(blob); } catch (e) {
+    // A JPEG that was cut short (common in downloaded artwork) decodes once its end marker is put back.
+    const b = new Uint8Array(await blob.arrayBuffer());
+    if (b[0] === 0xff && b[1] === 0xd8 && !(b.at(-2) === 0xff && b.at(-1) === 0xd9)) {
+      return await createImageBitmap(new Blob([b, new Uint8Array([0xff, 0xd9])], { type: 'image/jpeg' }));
+    }
+    throw e;
+  }
+}
+async function encodeCover(blob) {
+  const src = await decodeImage(blob);
+  const scale = Math.min(1, settings.size / Math.max(src.width, src.height));
+  const w = Math.max(1, Math.round(src.width * scale)), h = Math.max(1, Math.round(src.height * scale));
+  const img = scale < 1 ? await createImageBitmap(src, { resizeWidth: w, resizeHeight: h, resizeQuality: 'high' }) : src;
+  const c = new OffscreenCanvas(w, h);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);       // flatten transparency
+  ctx.drawImage(img, 0, 0);
+  const out = await c.convertToBlob({ type: 'image/jpeg', quality: settings.quality / 100 });
+  const bytes = new Uint8Array(await out.arrayBuffer());
+  const probe = probeImage(bytes);
+  if (!isGoodCover(probe)) throw new Error('browser produced an unexpected JPEG');
+  return { bytes, w, h };
+}
+// Picks the best picture in an inspected album and returns a clean cover {bytes, w, h, from}.
+async function chooseCover(album) {
+  const cands = [];
+  for (const im of album.images) if (im.probe && im.probe.type !== 'other') cands.push({ from: im.name, probe: im.probe, blob: im.blob });
+  const withArt = album.tracks.find(t => t.art && t.art.pictures.length);
+  if (withArt) { const p = frontPicture(withArt.art.pictures); cands.push({ from: 'embedded in ' + withArt.name, probe: p.probe, blob: p.blob }); }
+  const area = p => (p.w || 0) * (p.h || 0);
+  cands.sort((a, b) => (isColor(b.probe) - isColor(a.probe)) || (area(b.probe) - area(a.probe)));
+  for (const c of cands) {
+    try {
+      if (isGoodCover(c.probe)) {
+        const bytes = new Uint8Array(await c.blob().arrayBuffer());
+        return { bytes, w: c.probe.w, h: c.probe.h, from: c.from, reused: true };
+      }
+      const enc = await encodeCover(c.blob());
+      return { ...enc, from: c.from, reused: false };
+    } catch (e) { log(`  could not use ${c.from}: ${e.message}`, 'bad'); }
+  }
+  return null;
+}
+async function rebuildTrack(file, ext, cover) {
+  if (ext === 'flac') return rebuildFlac(file, cover);
+  if (ext === 'mp3') return rebuildMp3(file, cover);
+  return null;
+}
+async function writeFile(dir, name, data) {
+  const fh = await dir.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  try { await w.write(data); await w.close(); }
+  catch (e) { try { await w.abort(); } catch {} throw e; }
+}
+
+// ---------- fixing an album in place ----------
+async function fixAlbum(album, tick) {
+  const cover = await chooseCover(album);
+  if (!cover) { log(`${album.name}: no usable artwork, skipped`, 'bad'); return false; }
+  log(`${album.name}: cover from ${cover.from}${cover.reused ? '' : `, re-encoded to ${cover.w}×${cover.h}`} (${fmtBytes(cover.bytes.length)})`);
+  const newSig = sigOf(cover.bytes.length, cover.bytes.subarray(0, 65536));
+  let written = 0;
+  for (const t of album.tracks) {
+    checkCancel();
+    const a = t.art;
+    if (a && ART_EXT.has(a.kind) && !a.error) {
+      const ok = a.pictures.length === 1 && a.pictures[0].sig === newSig && a.pictures[0].picType === 3 && !(a.unreadable > 0);
+      if (!ok) {
+        const file = await t.handle.getFile();
+        const blob = await rebuildTrack(file, t.ext, cover);
+        if (blob) { await writeFile(album.dir, t.name, blob); written++; }
+      }
+    }
+    tick && tick(t);
+  }
+  // one cover.jpg, nothing else
+  for (const im of album.images) if (im.name !== 'cover.jpg') await album.dir.removeEntry(im.name);
+  const existing = album.images.find(im => im.name === 'cover.jpg');
+  if (!existing || existing.sig !== newSig) await writeFile(album.dir, 'cover.jpg', cover.bytes);
+  log(`${album.name}: ${written} tracks updated`, 'ok');
+  return true;
+}
+
+// ---------- importing music ----------
+async function listDir(dir) {
+  const audio = [], images = [], others = [], dirs = [];
+  for await (const [name, h] of dir.entries()) {
+    if (h.kind === 'directory') { if (!SKIP_DIR.test(name) && !JUNK_DIR.test(name) && !name.startsWith('.')) dirs.push({ name, handle: h }); continue; }
+    if (JUNK_FILE.test(name)) continue;
+    const ext = extOf(name);
+    const entry = { name, handle: h, ext };
+    if (AUDIO_EXT.has(ext)) audio.push(entry); else if (IMG_EXT.has(ext)) images.push(entry); else others.push(entry);
+  }
+  return { audio: audio.sort(byName), images: images.sort(byName), others: others.sort(byName), dirs: dirs.sort(byName) };
+}
+async function countAudio(dir) {
+  const l = await listDir(dir); let n = l.audio.length;
+  for (const d of l.dirs) n += await countAudio(d.handle);
+  return n;
+}
+async function entryExists(dir, name) {
+  try { await dir.getFileHandle(name); return true; } catch { return false; }
+}
+// Mirrors src (a folder picked on the computer) into destParent/src.name, fixing covers on the way.
+async function importFolder(src, destParent, tick) {
+  const stats = { copied: 0, skipped: 0, albums: 0 };
+  async function copyDir(srcDir, makeDest, path) {
+    checkCancel();
+    const l = await listDir(srcDir);
+    let dest = null;
+    const getDest = async () => dest || (dest = await makeDest());
+    if (l.audio.length) {
+      stats.albums++;
+      const album = { name: path, dir: srcDir, tracks: l.audio, images: l.images };
+      setJob(`Reading ${path}`);
+      await inspectAlbum(album);
+      const cover = await chooseCover(album);
+      log(cover ? `${path}: cover from ${cover.from}${cover.reused ? '' : `, re-encoded to ${cover.w}×${cover.h}`}` : `${path}: no artwork found`, cover ? '' : 'bad');
+      const d = await getDest();
+      for (const t of album.tracks) {
+        checkCancel();
+        if (settings.skip && await entryExists(d, t.name)) { stats.skipped++; tick(t, true); continue; }
+        const file = await t.handle.getFile();
+        let blob = null;
+        if (cover && t.art && ART_EXT.has(t.art.kind) && !t.art.error) blob = await rebuildTrack(file, t.ext, cover);
+        await writeFile(d, t.name, blob || file);
+        stats.copied++; tick(t, false);
+      }
+      if (cover) await writeFile(d, 'cover.jpg', cover.bytes);
+      else for (const im of l.images) await writeFile(d, im.name, await im.handle.getFile());
+    }
+    if (settings.extras) for (const o of l.others) {
+      const d = await getDest();
+      if (!(settings.skip && await entryExists(d, o.name))) await writeFile(d, o.name, await o.handle.getFile());
+    }
+    for (const sub of l.dirs) await copyDir(sub.handle, async () => (await getDest()).getDirectoryHandle(sub.name, { create: true }), joinPath(path, sub.name));
+  }
+  await copyDir(src, () => destParent.getDirectoryHandle(src.name, { create: true }), src.name);
+  return stats;
+}
+
+// ---------- card scanning and format detection ----------
+async function detectFormat(dir) {
+  const times = [];
+  for (let i = 0; i < 3; i++) {
+    const name = `.ap30-probe-${i}.tmp`;
+    await writeFile(dir, name, 'x');
+    times.push((await (await dir.getFileHandle(name)).getFile()).lastModified);
+    await dir.removeEntry(name);
+    await sleep(123 + 97 * i);
+  }
+  if (times.every(t => t % 2000 === 0)) return 'FAT32';
+  if (times.every(t => t % 10 === 0)) return 'exFAT';
+  return 'other';
+}
+async function scanCard(root) {
+  const albums = [], junk = [];
+  let tracksSeen = 0;
+  async function walk(dir, path) {
+    checkCancel();
+    const audio = [], images = [], dirs = [];
+    for await (const [name, h] of dir.entries()) {
+      if (h.kind === 'directory') {
+        if (SKIP_DIR.test(name)) continue;
+        if (JUNK_DIR.test(name)) { junk.push({ parent: dir, name, path: joinPath(path, name) }); continue; }
+        if (!name.startsWith('.')) dirs.push({ name, handle: h });
+        continue;
+      }
+      if (JUNK_FILE.test(name)) { junk.push({ parent: dir, name, path: joinPath(path, name) }); continue; }
+      const ext = extOf(name);
+      if (AUDIO_EXT.has(ext)) audio.push({ name, handle: h, ext });
+      else if (IMG_EXT.has(ext)) images.push({ name, handle: h, ext });
+    }
+    if (audio.length) {
+      const album = { dir, path, name: path.split(' / ').pop() || dir.name, tracks: audio.sort(byName), images: images.sort(byName) };
+      setJob(`Reading ${album.name}`);
+      await inspectAlbum(album, () => { tracksSeen++; setBar(null); });
+      albums.push(album);
+    }
+    dirs.sort(byName);
+    for (const d of dirs) await walk(d.handle, joinPath(path, d.name));
+  }
+  await walk(root, '');
+  return { albums, junk, tracksSeen };
+}
+
+// ---------- persistence of the card handle ----------
+function idb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('ap30-library', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+async function kv(key, value) {
+  try {
+    const db = await idb();
+    return await new Promise((res, rej) => {
+      const tx = db.transaction('kv', value === undefined ? 'readonly' : 'readwrite');
+      const st = tx.objectStore('kv');
+      const r = value === undefined ? st.get(key) : st.put(value, key);
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+  } catch { return undefined; }
+}
+
+// ---------- jobs, progress and log ----------
+let busy = false, cancelRequested = false, barDone = 0, barTotal = 0;
+function checkCancel() { if (cancelRequested) throw CANCEL; }
+function setJob(text) { $('jobLabel').textContent = text; }
+function setBar(total) {
+  if (total != null) { barTotal = total; barDone = 0; } else barDone++;
+  $('barFill').style.width = barTotal ? Math.min(100, 100 * barDone / barTotal) + '%' : '0';
+}
+function log(text, cls) {
+  const line = el('div', { class: cls || '' }, new Date().toLocaleTimeString() + '  ' + text);
+  $('log').append(line); $('log').scrollTop = $('log').scrollHeight;
+}
+async function runJob(title, fn) {
+  if (busy) return;
+  busy = true; cancelRequested = false;
+  document.querySelectorAll('main button').forEach(b => b.disabled = true);
+  $('cancelBtn').hidden = false; setJob(title); setBar(0);
+  try { await fn(); }
+  catch (e) {
+    if (e === CANCEL) log('Cancelled.', 'bad');
+    else if (e.name === 'AbortError') {}
+    else { log('Error: ' + e.message, 'bad'); console.error(e); }
+  } finally {
+    busy = false;
+    document.querySelectorAll('main button').forEach(b => b.disabled = false);
+    $('cancelBtn').hidden = true; setJob('Ready'); $('barFill').style.width = '0';
+    render();
+  }
+}
+
+// ---------- app state and UI ----------
+const state = { root: null, format: null, albums: [], junk: [], filter: 'all' };
+
+async function useCard(handle) {
+  state.root = handle; state.albums = []; state.junk = []; state.format = null;
+  await kv('card', handle);
+  $('intro').hidden = true; $('cardPanel').hidden = false; $('listSection').hidden = false;
+  $('cardName').textContent = handle.name;
+  render();
+  await runJob('Checking the card', async () => {
+    try { state.format = await detectFormat(handle); } catch (e) { state.format = 'unknown'; log('Format check failed: ' + e.message, 'bad'); }
+    render();
+    await rescan();
+  });
+}
+async function rescan() {
+  setJob('Scanning the card');
+  const r = await scanCard(state.root);
+  state.albums = r.albums; state.junk = r.junk;
+  const n = r.albums.filter(a => a.status.fixable).length;
+  log(`Scanned ${r.albums.length} albums, ${r.tracksSeen} tracks. ${n ? n + ' need cover fixes.' : 'All covers look fine.'}`, n ? '' : 'ok');
+  render();
+}
+async function findParent(root, target) {
+  // returns the directory handle that contains `target`
+  const path = await root.resolve(target);
+  if (!path || !path.length) return null;
+  let dir = root;
+  for (const part of path.slice(0, -1)) dir = await dir.getDirectoryHandle(part);
+  return dir;
+}
+
+function fmtChip() {
+  const f = state.format;
+  if (!f) return el('span', { class: 'chip' }, 'checking format…');
+  if (f === 'FAT32') return el('span', { class: 'chip ok' }, 'FAT32');
+  if (f === 'exFAT') return el('span', { class: 'chip warn' }, 'exFAT: FAT32 recommended');
+  if (f === 'other') return el('span', { class: 'chip bad' }, 'not a FAT32/exFAT drive');
+  return el('span', { class: 'chip' }, 'format unknown');
+}
+function fmtText() {
+  const f = state.format;
+  if (f === 'FAT32') return 'This card is FAT32, the safest choice for the AP30.';
+  if (f === 'exFAT') return 'This card is exFAT. The player can read it, but FAT32 is the safer choice for this firmware. Reformatting erases the card.';
+  if (f === 'other') return 'This folder is not on a FAT32 or exFAT drive (it may be on your computer\'s own disk). Check that you chose the AP30\'s SD card.';
+  return 'The format could not be determined.';
+}
+
+const thumbCache = new Map();
+async function loadThumb(album, img) {
+  try {
+    const key = album.path;
+    if (!thumbCache.has(key)) {
+      // smallest picture first: cheapest to decode
+      const cands = album.images.filter(i => i.probe && i.probe.type !== 'other').map(i => ({ size: i.size, blob: i.blob }));
+      const t = album.tracks.find(t => t.art && t.art.pictures.length);
+      if (t) { const p = frontPicture(t.art.pictures); cands.push({ size: p.len, blob: p.blob }); }
+      cands.sort((a, b) => a.size - b.size);
+      for (const c of cands) {
+        try {
+          const bmp = await decodeImage(c.blob());
+          const cv = new OffscreenCanvas(128, 128);
+          const ctx = cv.getContext('2d'); ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(bmp, 0, 0, 128, 128);
+          thumbCache.set(key, URL.createObjectURL(await cv.convertToBlob({ type: 'image/jpeg', quality: 0.8 })));
+          break;
+        } catch {}
+      }
+      if (!thumbCache.has(key)) return;
+    }
+    img.src = thumbCache.get(key);
+  } catch {}
+}
+
+function render() {
+  if (!state.root) return;
+  const albums = state.albums;
+  $('fmtStat').replaceChildren(fmtChip());
+  $('fmtText').textContent = fmtText();
+  $('nAlbums').textContent = albums.length;
+  $('nTracks').textContent = albums.reduce((s, a) => s + a.tracks.length, 0);
+  $('nSize').textContent = fmtBytes(albums.reduce((s, a) => s + (a.bytes || 0), 0));
+  const fixable = albums.filter(a => a.status.fixable);
+  $('fixAllBtn').textContent = fixable.length ? `Fix all covers (${fixable.length})` : 'Fix all covers';
+  if (!busy) $('fixAllBtn').disabled = !fixable.length;
+  $('junkBtn').hidden = !state.junk.length;
+  $('junkBtn').textContent = `Remove junk files (${state.junk.length})`;
+  for (const b of $('filterSeg').children) b.classList.toggle('on', b.dataset.f === state.filter);
+  const shown = state.filter === 'issues' ? albums.filter(a => a.status.issues.length) : albums;
+  $('listTitle').textContent = state.filter === 'issues' ? `Albums needing fixes (${shown.length})` : `Albums (${albums.length})`;
+  const list = $('albums');
+  if (!shown.length) {
+    list.replaceChildren(el('div', { class: 'empty' }, albums.length ? 'Every album looks good.' : (busy ? 'Scanning…' : 'No music on this card yet. Use Add music… to copy some.')));
+    return;
+  }
+  list.replaceChildren(...shown.map(a => {
+    const img = el('img', { class: 'thumb', alt: '' });
+    loadThumb(a, img);
+    const chips = a.status.issues.length
+      ? a.status.issues.map(i => el('span', { class: 'chip ' + i.level }, i.text))
+      : [el('span', { class: 'chip ok' }, 'covers OK')];
+    for (const n of a.status.notes) chips.push(el('span', { class: 'chip' }, n));
+    const parent = a.path.includes(' / ') ? a.path.slice(0, a.path.lastIndexOf(' / ')) : '';
+    return el('div', { class: 'album' },
+      img,
+      el('div', {},
+        el('div', { class: 'name' }, a.name),
+        el('div', { class: 'path' }, `${parent ? parent + ' · ' : ''}${a.tracks.length} tracks · ${fmtBytes(a.bytes || 0)}`),
+        el('div', { class: 'chips' }, chips)),
+      el('div', { class: 'acts' },
+        a.status.fixable ? el('button', { class: 'small', disabled: busy ? '' : null, onclick: () => fixOne(a) }, 'Fix covers') : null,
+        el('button', { class: 'small danger', disabled: busy ? '' : null, onclick: () => deleteAlbum(a) }, 'Delete')));
+  }));
+}
+
+// ---------- actions ----------
+// In-place changes are only allowed on a FAT32/exFAT drive, so a library folder on the computer's own disk
+// opened here by mistake is never modified.
+function cardWritable() {
+  if (state.format === 'FAT32' || state.format === 'exFAT') return true;
+  log('This folder is not on a FAT32/exFAT SD card, so the page will not change files in it. Open the AP30\'s card instead.', 'bad');
+  return false;
+}
+async function pickCard() {
+  try {
+    const h = await window.showDirectoryPicker({ id: 'ap30-card', mode: 'readwrite' });
+    await useCard(h);
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    log('Could not open that folder: ' + e.message + '. If you chose the drive itself, try a folder on the card instead.', 'bad');
+  }
+}
+async function reconnect(handle) {
+  try {
+    if (await handle.requestPermission({ mode: 'readwrite' }) !== 'granted') return;
+    await useCard(handle);
+  } catch (e) { log('Could not reopen the card: ' + e.message, 'bad'); $('reconnectBtn').hidden = true; }
+}
+async function fixOne(album) {
+  if (!cardWritable()) return;
+  await runJob('Fixing ' + album.name, async () => {
+    setBar(album.tracks.length);
+    await fixAlbum(album, () => setBar(null));
+    await refreshAlbum(album);
+  });
+}
+async function fixAll() {
+  if (!cardWritable()) return;
+  const todo = state.albums.filter(a => a.status.fixable);
+  await runJob('Fixing covers', async () => {
+    setBar(todo.reduce((s, a) => s + a.tracks.length, 0));
+    for (const a of todo) { setJob('Fixing ' + a.name); await fixAlbum(a, () => setBar(null)); await refreshAlbum(a); }
+    log(`Fixed ${todo.length} albums.`, 'ok');
+  });
+}
+async function refreshAlbum(a) {
+  const l = await listDir(a.dir);
+  a.tracks = l.audio; a.images = l.images;
+  await inspectAlbum(a);
+  thumbCache.delete(a.path);
+}
+async function deleteAlbum(a) {
+  if (!cardWritable()) return;
+  if (!confirm(`Delete "${a.path}" from the card?\n\n${a.tracks.length} tracks and everything else in that folder will be removed. This can't be undone.`)) return;
+  await runJob('Deleting ' + a.name, async () => {
+    const parent = await findParent(state.root, a.dir);
+    if (!parent) throw new Error('cannot delete the top folder of the card');
+    await parent.removeEntry(a.dir.name, { recursive: true });
+    state.albums = state.albums.filter(x => x !== a);
+    log(`Deleted ${a.path}.`, 'ok');
+  });
+}
+async function removeJunk() {
+  if (!cardWritable()) return;
+  const list = state.junk.slice();
+  if (!confirm(`Remove ${list.length} junk files and folders (macOS "._" files, .DS_Store, Thumbs.db, leftover .crswap files)? The player shows some of these as broken tracks.`)) return;
+  await runJob('Removing junk', async () => {
+    for (const j of list) { try { await j.parent.removeEntry(j.name, { recursive: true }); } catch (e) { log(`${j.path}: ${e.message}`, 'bad'); } }
+    state.junk = [];
+    log(`Removed ${list.length} junk entries.`, 'ok');
+  });
+}
+async function addMusic() {
+  let src;
+  try { src = await window.showDirectoryPicker({ id: 'ap30-source', mode: 'read', startIn: 'music' }); }
+  catch (e) { if (e.name !== 'AbortError') log('Could not open that folder: ' + e.message, 'bad'); return; }
+  if (!cardWritable()) return;
+  if (await state.root.isSameEntry(src) || await state.root.resolve(src)) { log('That folder is already on the card. Choose a folder on your computer.', 'bad'); return; }
+  await runJob('Adding ' + src.name, async () => {
+    let dest = state.root;
+    for (const part of settings.dest.split(/[\\/]/).map(s => s.trim()).filter(Boolean)) dest = await dest.getDirectoryHandle(part, { create: true });
+    setJob('Counting tracks');
+    const total = await countAudio(src);
+    if (!total) { log(`No music files in ${src.name}.`, 'bad'); return; }
+    setBar(total);
+    const s = await importFolder(src, dest, (t, skipped) => { setBar(null); setJob(`${skipped ? 'Skipping' : 'Copying'} ${t.name}`); });
+    log(`Added ${src.name}: ${s.copied} tracks copied${s.skipped ? `, ${s.skipped} already on the card` : ''}, ${s.albums} albums.`, 'ok');
+    await rescan();
+  });
+}
+
+// ---------- wiring ----------
+function initSettings() {
+  const bind = (id, key, parse, prop = 'value') => {
+    const e = $(id); e[prop] = settings[key];
+    e.addEventListener('change', () => { settings[key] = parse(e[prop]); saveSettings(); if (key === 'size') { state.albums.forEach(a => a.status = albumStatus(a)); render(); } });
+  };
+  bind('setSize', 'size', v => Math.min(1500, Math.max(100, parseInt(v, 10) || 500)));
+  bind('setQuality', 'quality', v => Math.min(100, Math.max(50, parseInt(v, 10) || 88)));
+  bind('setDest', 'dest', v => v.trim());
+  bind('setSkip', 'skip', Boolean, 'checked');
+  bind('setExtras', 'extras', Boolean, 'checked');
+}
+async function init() {
+  initSettings();
+  if (!('showDirectoryPicker' in window)) {
+    $('noApi').hidden = false; $('openBtn').disabled = true; return;
+  }
+  $('openBtn').onclick = pickCard;
+  $('addBtn').onclick = addMusic;
+  $('fixAllBtn').onclick = fixAll;
+  $('junkBtn').onclick = removeJunk;
+  $('rescanBtn').onclick = () => runJob('Scanning', rescan);
+  $('cancelBtn').onclick = () => { cancelRequested = true; setJob('Cancelling…'); };
+  $('filterSeg').onclick = e => { const f = e.target.dataset.f; if (f) { state.filter = f; render(); } };
+  const saved = await kv('card');
+  if (saved) {
+    const b = $('reconnectBtn');
+    b.textContent = `Reopen ${saved.name}`; b.hidden = false;
+    b.onclick = () => reconnect(saved);
+  }
+}
+init();
+
+// Hooks for automated tests (harmless in normal use).
+window.AP30 = { parseFlac, parseId3, rebuildFlac, rebuildMp3, readTrackArt, probeImage, encodeCover, chooseCover,
+  inspectAlbum, fixAlbum, importFolder, scanCard, detectFormat, listDir, useCard, settings, state };
+</script>
+</body>
+</html>

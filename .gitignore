@@ -1,0 +1,6 @@
+# music copies and working files
+staging/
+backup/
+*.log
+survey-after.txt
+__pycache__/
