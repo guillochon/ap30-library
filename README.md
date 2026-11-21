@@ -21,6 +21,8 @@ A single-file web page for managing the SD card. Use it from [GitHub Pages](http
 
 A clean cover is a baseline (non-progressive) RGB JPEG, 500 px on the long side by default. Size and quality are adjustable under *Settings*. Embedded covers are rewritten for FLAC and MP3 (ID3v2.3/2.4); other formats get `cover.jpg` only. The audio data is copied byte for byte.
 
+Scanning is quick: the page reads only file headers (a few 16 KB pieces per track, never whole covers), reads four tracks at a time, and remembers what it found and the album thumbnails in the browser. Opening the same card again reads only files that are new or changed.
+
 In-place changes are allowed only when the open folder is on a FAT32 or exFAT drive, so a library on your computer's own disk opened by mistake is never changed.
 
 ## Python tools

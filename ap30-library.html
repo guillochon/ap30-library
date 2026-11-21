@@ -206,7 +206,6 @@ function concat(parts) {
 }
 async function readBytes(file, start, end) { return new Uint8Array(await file.slice(start, end).arrayBuffer()); }
 function fnv(bytes) { let h = 0x811c9dc5; for (let i = 0; i < bytes.length; i++) { h ^= bytes[i]; h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(16); }
-const sigOf = (len, sample) => len + ':' + fnv(sample);
 function fmtBytes(n) { const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + ' ' + u[i]; }
 function el(tag, attrs, ...kids) {
   const e = document.createElement(tag);
@@ -247,17 +246,61 @@ const isColor = p => (p.type === 'jpeg' && p.comps === 3) || (p.type === 'png' &
 const isGoodCover = p => p && p.type === 'jpeg' && !p.unknown && !p.progressive && (p.sof === 0xc0 || p.sof === 0xc1)
   && p.comps === 3 && Math.max(p.w, p.h) <= settings.size;
 
+// ---------- reading only the bytes that are needed ----------
+// Reads a file in 16 KB pieces and reuses them, so walking metadata headers costs a few small reads
+// instead of loading whole tags (an embedded cover can be megabytes).
+class Reader {
+  constructor(file, chunk = 16384) { this.file = file; this.chunk = chunk; this.parts = []; }
+  async bytes(start, len) {
+    for (const p of this.parts) {
+      if (start >= p.start && start + len <= p.start + p.data.length) return p.data.subarray(start - p.start, start - p.start + len);
+    }
+    const data = await readBytes(this.file, start, Math.min(this.file.size, start + Math.max(len, this.chunk)));
+    if (data.length < len) throw new Error('file ends early');
+    this.parts.push({ start, data });
+    return data.subarray(0, len);
+  }
+}
+// A picture is identified by its length plus a hash of its first 8 KB: enough to tell covers apart,
+// cheap to read, and the same whether computed from a file or from bytes in memory.
+const SIG_HEAD = 8192;
+const sigOf = (len, head) => len + ':' + fnv(head);
+const sigOfBytes = b => sigOf(b.length, b.subarray(0, SIG_HEAD));
+// For a JPEG whose frame header sits beyond the first 8 KB (big EXIF/XMP/ICC blocks), hop from segment
+// header to segment header instead of reading the whole image.
+async function probeJpegFar(r, start, len) {
+  let i = 2;
+  while (i + 4 <= len) {
+    const h = await r.bytes(start + i, Math.min(10, len - i));
+    if (h[0] !== 0xff) break;
+    const m = h[1];
+    if (m === 0xff) { i++; continue; }
+    if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+    if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return h.length >= 10 ? probeImage(concat([[0xff, 0xd8], h])) : { type: 'jpeg', unknown: true };
+    if (m === 0xda || m === 0xd9) break;          // image data reached without a frame header
+    i += 2 + ((h[2] << 8) | h[3]);
+  }
+  return { type: 'jpeg', unknown: true };
+}
+async function pictureInfo(r, picType, mime, start, len) {
+  const head = await r.bytes(start, Math.min(len, SIG_HEAD));
+  let probe = probeImage(head);
+  if (probe.unknown && len > SIG_HEAD) probe = await probeJpegFar(r, start, len);
+  return { picType, mime, len, start, probe, sig: sigOf(len, head) };
+}
+const picBlob = (file, p) => file.slice(p.start, p.start + p.len, p.mime || 'image/jpeg');
+
 // ---------- FLAC ----------
 async function parseFlac(file) {
-  const first = await readBytes(file, 0, Math.min(file.size, 131072));
-  const at = async (start, len) => start + len <= first.length ? first.subarray(start, start + len) : readBytes(file, start, start + len);
+  const r = new Reader(file);
   let off = 0;
-  if (ascii(first, 0, 3) === 'ID3') off = 10 + syncsafe(first, 6);   // a stray ID3 tag in front; dropped on rewrite
-  if (ascii(await at(off, 4), 0, 4) !== 'fLaC') throw new Error('not a FLAC file');
+  const h0 = await r.bytes(0, 10);
+  if (ascii(h0, 0, 3) === 'ID3') off = 10 + syncsafe(h0, 6);   // a stray ID3 tag in front; dropped on rewrite
+  if (ascii(await r.bytes(off, 4), 0, 4) !== 'fLaC') throw new Error('not a FLAC file');
   off += 4;
   const blocks = [];
   for (;;) {
-    const h = await at(off, 4);
+    const h = await r.bytes(off, 4);
     const last = h[0] & 0x80, type = h[0] & 0x7f, len = u24(h, 1);
     blocks.push({ type, start: off + 4, len });
     off += 4 + len;
@@ -265,24 +308,17 @@ async function parseFlac(file) {
     if (off > file.size || blocks.length > 1000) throw new Error('damaged FLAC metadata');
   }
   if (!blocks.length || blocks[0].type !== 0) throw new Error('FLAC without STREAMINFO');
-  return { blocks, audioOffset: off };
+  return { blocks, audioOffset: off, reader: r };
 }
-async function readFlacPicture(file, blk) {
-  let head = await readBytes(file, blk.start, blk.start + Math.min(blk.len, 4096));
-  const need = n => n > head.length;
-  if (need(8) || need(8 + u32(head, 4) + 4)) head = await readBytes(file, blk.start, blk.start + blk.len);
-  const picType = u32(head, 0), mimeLen = u32(head, 4);
-  const mime = ascii(head, 8, mimeLen);
+async function readFlacPicture(r, blk) {
+  const fixed = await r.bytes(blk.start, 8);
+  const picType = u32(fixed, 0), mimeLen = u32(fixed, 4);
+  const mime = ascii(await r.bytes(blk.start + 8, mimeLen), 0, mimeLen);
   let o = 8 + mimeLen;
-  const descLen = u32(head, o);
-  if (need(o + 4 + descLen + 20)) head = await readBytes(file, blk.start, blk.start + blk.len);
+  const descLen = u32(await r.bytes(blk.start + o, 4), 0);
   o += 4 + descLen + 16;               // skip description, width, height, depth, colours
-  const len = u32(head, o); o += 4;
-  const dataStart = blk.start + o;
-  let sample = await readBytes(file, dataStart, dataStart + Math.min(len, 65536));
-  let probe = probeImage(sample);
-  if (probe.unknown && len > 65536) probe = probeImage(await readBytes(file, dataStart, dataStart + len));
-  return { picType, mime, len, probe, sig: sigOf(len, sample), blob: () => file.slice(dataStart, dataStart + len, mime || 'image/jpeg') };
+  const len = u32(await r.bytes(blk.start + o, 4), 0); o += 4;
+  return pictureInfo(r, picType, mime, blk.start + o, len);
 }
 function flacPictureBlock(cover) {
   const mime = latin1Bytes('image/jpeg');
@@ -324,19 +360,46 @@ async function parseId3(file) {
   }
   return { present: true, ver, frames, audioOffset };
 }
-function readApic(frame, ver) {
-  const blocked = ver === 3 ? (frame.flags & 0x00c0) : (frame.flags & 0x000f);
-  if (blocked) return null;            // compressed / encrypted / unsynchronised frame: can't read the picture
-  const b = frame.body;
+// Where the picture data starts inside an APIC frame body: returns null if `b` ends before that point.
+function apicHead(b) {
   const enc = b[0];
   let o = 1; while (o < b.length && b[o] !== 0) o++;
+  if (o >= b.length) return null;
   const mime = ascii(b, 1, o - 1); o++;
   const picType = b[o++];
   if (enc === 1 || enc === 2) { while (o + 1 < b.length && !(b[o] === 0 && b[o + 1] === 0)) o += 2; o += 2; }
   else { while (o < b.length && b[o] !== 0) o++; o++; }
-  const data = b.subarray(o);
-  const sample = data.subarray(0, 65536);
-  return { picType, mime, len: data.length, probe: probeImage(data), sig: sigOf(data.length, sample), blob: () => new Blob([data], { type: mime || 'image/jpeg' }) };
+  return o > b.length ? null : { mime, picType, o };
+}
+// Walks the ID3v2 frame headers without loading the tag, and reads only the start of each picture.
+async function scanId3(file) {
+  const r = new Reader(file);
+  const h = await r.bytes(0, 10);
+  if (ascii(h, 0, 3) !== 'ID3') return { pictures: [] };
+  const ver = h[3], flags = h[5], end = 10 + syncsafe(h, 6);
+  if (ver < 3 || ver > 4) return { error: 'ID3v2.' + ver + ' tag', pictures: [] };
+  if (flags & 0x80) return { error: 'unsynchronised ID3 tag', pictures: [] };
+  let i = 10;
+  if (flags & 0x40) { const e = await r.bytes(10, 4); i += ver === 3 ? u32(e, 0) + 4 : syncsafe(e, 0); }
+  const pictures = [];
+  let unreadable = 0;
+  while (i + 10 <= end) {
+    const fh = await r.bytes(i, 10);
+    if (!/^[A-Z0-9]{4}$/.test(ascii(fh, 0, 4))) break;
+    const fsz = ver === 4 ? syncsafe(fh, 4) : u32(fh, 4);
+    if (i + 10 + fsz > end) break;
+    if (ascii(fh, 0, 4) === 'APIC') {
+      const fflags = (fh[8] << 8) | fh[9];
+      if (ver === 3 ? (fflags & 0x00c0) : (fflags & 0x000f)) unreadable++;   // compressed / encrypted / unsynchronised
+      else {
+        const ah = apicHead(await r.bytes(i + 10, Math.min(fsz, 1024))) || apicHead(await r.bytes(i + 10, fsz));
+        if (ah) pictures.push(await pictureInfo(r, ah.picType, ah.mime, i + 10 + ah.o, fsz - ah.o));
+        else unreadable++;
+      }
+    }
+    i += 10 + fsz;
+  }
+  return { pictures, unreadable };
 }
 async function rebuildMp3(file, cover) {
   const t = await parseId3(file);
@@ -361,40 +424,86 @@ async function readTrackArt(file, ext) {
     if (ext === 'flac') {
       const p = await parseFlac(file);
       const pics = [];
-      for (const b of p.blocks) if (b.type === 6) pics.push(await readFlacPicture(file, b));
+      for (const b of p.blocks) if (b.type === 6) pics.push(await readFlacPicture(p.reader, b));
       return { kind: 'flac', pictures: pics };
     }
     if (ext === 'mp3') {
-      const t = await parseId3(file);
-      if (t.unsupported) return { kind: 'mp3', error: t.unsupported, pictures: [] };
-      const apics = t.frames.filter(f => f.id === 'APIC');
-      const pics = apics.map(f => readApic(f, t.ver)).filter(Boolean);
-      return { kind: 'mp3', pictures: pics, unreadable: apics.length - pics.length };
+      const t = await scanId3(file);
+      return { kind: 'mp3', ...t };
     }
     return { kind: 'other', pictures: [] };
   } catch (e) {
     return { kind: ext, error: e.message, pictures: [] };
   }
 }
-// album: { dir, tracks: [{name, handle, ext}], images: [{name, handle}] } -> fills in art, sizes and issues
-async function inspectAlbum(album, onTrack) {
+async function readImageInfo(file) {
+  const { probe, sig } = await pictureInfo(new Reader(file, SIG_HEAD), 0, '', 0, file.size);
+  return { probe, sig };
+}
+// Runs fn over items with at most `limit` running at once.
+async function pool(items, limit, fn) {
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const k = next++; await fn(items[k], k); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
+// ---------- scan cache ----------
+// What was learned about each file on the card, keyed by its path and checked against its size and
+// modification time, so a rescan reads only new or changed files.
+const CACHE_VERSION = 2;
+const scanCache = {
+  map: new Map(), pending: [], seen: new Set(), prefix: '',
+  async load(prefix) {
+    this.prefix = prefix; this.seen = new Set(); this.pending = [];
+    const all = await dbReq('scan', 'readonly', s => s.getAll()) || [];
+    this.map = new Map(all.filter(e => e.key.startsWith(prefix) && e.v === CACHE_VERSION).map(e => [e.key, e]));
+  },
+  get(key, file) {
+    this.seen.add(key);
+    const e = this.map.get(key);
+    return e && e.size === file.size && e.mtime === file.lastModified ? e.data : null;
+  },
+  put(key, file, data) {
+    const e = { key, v: CACHE_VERSION, size: file.size, mtime: file.lastModified, data };
+    this.map.set(key, e); this.pending.push(e);
+  },
+  async flush() {
+    const batch = this.pending.splice(0);
+    if (batch.length) await dbReq('scan', 'readwrite', s => { for (const e of batch) s.put(e); });
+  },
+  async prune() {   // forget files that are no longer on the card (only after a complete scan)
+    const gone = [...this.map.keys()].filter(k => !this.seen.has(k));
+    for (const k of gone) this.map.delete(k);
+    if (gone.length) await dbReq('scan', 'readwrite', s => { for (const k of gone) s.delete(k); });
+  },
+};
+const cacheKey = (album, name) => scanCache.prefix + album.path + '|' + name;
+
+// album: { dir, path, tracks: [{name, handle, ext}], images: [{name, handle}] } -> fills in art, sizes and issues.
+// With useCache, results for unchanged files come from the scan cache.
+async function inspectAlbum(album, onTrack, useCache = false) {
   album.bytes = 0;
-  for (const t of album.tracks) {
+  await pool(album.tracks, 4, async t => {
     checkCancel();
-    const f = await t.handle.getFile();
+    const f = t.file = await t.handle.getFile();
     t.size = f.size; album.bytes += f.size;
-    t.art = await readTrackArt(f, t.ext);
+    const key = useCache && cacheKey(album, t.name);
+    t.art = (useCache && scanCache.get(key, f)) || null;
+    if (!t.art) {
+      t.art = await readTrackArt(f, t.ext);
+      if (useCache) scanCache.put(key, f, t.art);
+    }
     onTrack && onTrack(t);
-  }
-  for (const im of album.images) {
-    const f = await im.handle.getFile();
+  });
+  await pool(album.images, 4, async im => {
+    const f = im.file = await im.handle.getFile();
     im.size = f.size;
-    let sample = await readBytes(f, 0, Math.min(f.size, 65536));
-    im.probe = probeImage(sample);
-    if (im.probe.unknown && f.size > 65536) im.probe = probeImage(await readBytes(f, 0, f.size));
-    im.sig = sigOf(f.size, sample);
-    im.blob = () => f;
-  }
+    const key = useCache && cacheKey(album, im.name);
+    let info = (useCache && scanCache.get(key, f)) || null;
+    if (!info) { info = await readImageInfo(f); if (useCache) scanCache.put(key, f, info); }
+    im.probe = info.probe; im.sig = info.sig;
+  });
+  if (useCache) await scanCache.flush();
   album.status = albumStatus(album);
   return album;
 }
@@ -459,9 +568,9 @@ async function encodeCover(blob) {
 // Picks the best picture in an inspected album and returns a clean cover {bytes, w, h, from}.
 async function chooseCover(album) {
   const cands = [];
-  for (const im of album.images) if (im.probe && im.probe.type !== 'other') cands.push({ from: im.name, probe: im.probe, blob: im.blob });
+  for (const im of album.images) if (im.probe && im.probe.type !== 'other') cands.push({ from: im.name, probe: im.probe, blob: () => im.file });
   const withArt = album.tracks.find(t => t.art && t.art.pictures.length);
-  if (withArt) { const p = frontPicture(withArt.art.pictures); cands.push({ from: 'embedded in ' + withArt.name, probe: p.probe, blob: p.blob }); }
+  if (withArt) { const p = frontPicture(withArt.art.pictures); cands.push({ from: 'embedded in ' + withArt.name, probe: p.probe, blob: () => picBlob(withArt.file, p) }); }
   const area = p => (p.w || 0) * (p.h || 0);
   cands.sort((a, b) => (isColor(b.probe) - isColor(a.probe)) || (area(b.probe) - area(a.probe)));
   for (const c of cands) {
@@ -493,7 +602,7 @@ async function fixAlbum(album, tick) {
   const cover = await chooseCover(album);
   if (!cover) { log(`${album.name}: no usable artwork, skipped`, 'bad'); return false; }
   log(`${album.name}: cover from ${cover.from}${cover.reused ? '' : `, re-encoded to ${cover.w}×${cover.h}`} (${fmtBytes(cover.bytes.length)})`);
-  const newSig = sigOf(cover.bytes.length, cover.bytes.subarray(0, 65536));
+  const newSig = sigOfBytes(cover.bytes);
   let written = 0;
   for (const t of album.tracks) {
     checkCancel();
@@ -588,9 +697,10 @@ async function detectFormat(dir) {
   if (times.every(t => t % 10 === 0)) return 'exFAT';
   return 'other';
 }
-async function scanCard(root) {
+// Lists every folder first (cheap), then reads the albums with a real progress bar, handing each
+// finished album to onAlbum so the list fills in as it goes.
+async function scanCard(root, onAlbum) {
   const albums = [], junk = [];
-  let tracksSeen = 0;
   async function walk(dir, path) {
     checkCancel();
     const audio = [], images = [], dirs = [];
@@ -601,43 +711,70 @@ async function scanCard(root) {
         if (!name.startsWith('.')) dirs.push({ name, handle: h });
         continue;
       }
+      if (name.startsWith('.ap30-probe')) continue;     // the format check's own temporary files
       if (JUNK_FILE.test(name)) { junk.push({ parent: dir, name, path: joinPath(path, name) }); continue; }
       const ext = extOf(name);
       if (AUDIO_EXT.has(ext)) audio.push({ name, handle: h, ext });
       else if (IMG_EXT.has(ext)) images.push({ name, handle: h, ext });
     }
-    if (audio.length) {
-      const album = { dir, path, name: path.split(' / ').pop() || dir.name, tracks: audio.sort(byName), images: images.sort(byName) };
-      setJob(`Reading ${album.name}`);
-      await inspectAlbum(album, () => { tracksSeen++; setBar(null); });
-      albums.push(album);
-    }
+    if (audio.length) albums.push({ dir, path, name: path.split(' / ').pop() || dir.name, tracks: audio.sort(byName), images: images.sort(byName) });
     dirs.sort(byName);
     for (const d of dirs) await walk(d.handle, joinPath(path, d.name));
   }
+  setJob('Listing folders');
   await walk(root, '');
-  return { albums, junk, tracksSeen };
+  const tracks = albums.reduce((s, a) => s + a.tracks.length, 0);
+  setBar(tracks);
+  await scanCache.load(`card:${root.name}:`);
+  for (const album of albums) {
+    checkCancel();
+    setJob(`Reading ${album.name}`);
+    await inspectAlbum(album, () => setBar(null), true);
+    onAlbum && onAlbum(album);
+  }
+  await scanCache.prune();
+  return { albums, junk, tracksSeen: tracks };
 }
 
-// ---------- persistence of the card handle ----------
+// ---------- browser storage: the card handle, the scan cache and thumbnails ----------
+// Storage is only a speed-up. It can be missing (private windows, blocked site data) or stuck (an
+// upgrade waiting on the page open in another tab), so every use gives up after a few seconds and the
+// page carries on without it.
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('storage timeout')), ms))]);
+let dbPromise = null;
 function idb() {
-  return new Promise((res, rej) => {
-    const r = indexedDB.open('ap30-library', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('kv');
-    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
-  });
+  if (!dbPromise) {
+    dbPromise = withTimeout(new Promise((res, rej) => {
+      const r = indexedDB.open('ap30-library', 2);
+      r.onupgradeneeded = () => {
+        const db = r.result;
+        if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+        if (!db.objectStoreNames.contains('scan')) db.createObjectStore('scan', { keyPath: 'key' });
+        if (!db.objectStoreNames.contains('thumbs')) db.createObjectStore('thumbs', { keyPath: 'key' });
+      };
+      r.onsuccess = () => { const db = r.result; db.onversionchange = () => { db.close(); dbPromise = null; }; res(db); };
+      r.onerror = () => rej(r.error);
+    }), 3000);
+    dbPromise.catch(() => { dbPromise = null; });
+  }
+  return dbPromise;
 }
-async function kv(key, value) {
+// Runs fn(store) in one transaction and resolves with the last request's result, or undefined when
+// storage is unavailable.
+async function dbReq(store, mode, fn) {
   try {
     const db = await idb();
-    return await new Promise((res, rej) => {
-      const tx = db.transaction('kv', value === undefined ? 'readonly' : 'readwrite');
-      const st = tx.objectStore('kv');
-      const r = value === undefined ? st.get(key) : st.put(value, key);
-      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
-    });
+    return await withTimeout(new Promise((res, rej) => {
+      const tx = db.transaction(store, mode);
+      const r = fn(tx.objectStore(store));
+      tx.oncomplete = () => res(r ? r.result : undefined);
+      tx.onerror = tx.onabort = () => rej(tx.error);
+    }), 5000);
   } catch { return undefined; }
 }
+const kv = (key, value) => value === undefined
+  ? dbReq('kv', 'readonly', s => s.get(key))
+  : dbReq('kv', 'readwrite', s => s.put(value, key));
 
 // ---------- jobs, progress and log ----------
 let busy = false, cancelRequested = false, barDone = 0, barTotal = 0;
@@ -679,19 +816,25 @@ async function useCard(handle) {
   $('cardName').textContent = handle.name;
   render();
   await runJob('Checking the card', async () => {
-    try { state.format = await detectFormat(handle); } catch (e) { state.format = 'unknown'; log('Format check failed: ' + e.message, 'bad'); }
-    render();
+    const fmt = detectFormat(handle)   // runs alongside the scan
+      .then(f => { state.format = f; scheduleRender(); })
+      .catch(e => { state.format = 'unknown'; log('Format check failed: ' + e.message, 'bad'); });
     await rescan();
+    await fmt;
   });
 }
 async function rescan() {
-  setJob('Scanning the card');
-  const r = await scanCard(state.root);
-  state.albums = r.albums; state.junk = r.junk;
+  const t0 = performance.now();
+  state.albums = []; state.junk = [];
+  const r = await scanCard(state.root, album => { state.albums.push(album); scheduleRender(); });
+  state.junk = r.junk;
   const n = r.albums.filter(a => a.status.fixable).length;
-  log(`Scanned ${r.albums.length} albums, ${r.tracksSeen} tracks. ${n ? n + ' need cover fixes.' : 'All covers look fine.'}`, n ? '' : 'ok');
+  const secs = ((performance.now() - t0) / 1000).toFixed(1);
+  log(`Scanned ${r.albums.length} albums, ${r.tracksSeen} tracks in ${secs} s. ${n ? n + ' need cover fixes.' : 'All covers look fine.'}`, n ? '' : 'ok');
   render();
 }
+let renderTimer = 0;
+function scheduleRender() { if (!renderTimer) renderTimer = setTimeout(() => { renderTimer = 0; render(); }, 150); }
 async function findParent(root, target) {
   // returns the directory handle that contains `target`
   const path = await root.resolve(target);
@@ -717,31 +860,45 @@ function fmtText() {
   return 'The format could not be determined.';
 }
 
-const thumbCache = new Map();
-async function loadThumb(album, img) {
-  try {
-    const key = album.path;
-    if (!thumbCache.has(key)) {
-      // smallest picture first: cheapest to decode
-      const cands = album.images.filter(i => i.probe && i.probe.type !== 'other').map(i => ({ size: i.size, blob: i.blob }));
-      const t = album.tracks.find(t => t.art && t.art.pictures.length);
-      if (t) { const p = frontPicture(t.art.pictures); cands.push({ size: p.len, blob: p.blob }); }
-      cands.sort((a, b) => a.size - b.size);
-      for (const c of cands) {
-        try {
-          const bmp = await decodeImage(c.blob());
-          const cv = new OffscreenCanvas(128, 128);
-          const ctx = cv.getContext('2d'); ctx.imageSmoothingQuality = 'high';
-          ctx.drawImage(bmp, 0, 0, 128, 128);
-          thumbCache.set(key, URL.createObjectURL(await cv.convertToBlob({ type: 'image/jpeg', quality: 0.8 })));
-          break;
-        } catch {}
-      }
-      if (!thumbCache.has(key)) return;
-    }
-    img.src = thumbCache.get(key);
-  } catch {}
+// Album thumbnails: made once per album (at most two decoding at a time) and kept in browser storage
+// against the picture's fingerprint, so reopening the card shows them without reading the covers.
+const thumbUrls = new Map();          // album path -> Promise<object URL | null>
+let thumbSlots = 2; const thumbQueue = [];
+async function thumbSlot(fn) {
+  if (thumbSlots === 0) await new Promise(r => thumbQueue.push(r));
+  thumbSlots--;
+  try { return await fn(); } finally { thumbSlots++; const next = thumbQueue.shift(); next && next(); }
 }
+function thumbFor(album) {
+  if (!thumbUrls.has(album.path)) thumbUrls.set(album.path, makeThumb(album).catch(() => null));
+  return thumbUrls.get(album.path);
+}
+async function makeThumb(album) {
+  // smallest picture first: cheapest to decode
+  const cands = album.images.filter(i => i.probe && i.probe.type !== 'other').map(i => ({ size: i.size, sig: i.sig, blob: () => i.file }));
+  const t = album.tracks.find(t => t.art && t.art.pictures.length);
+  if (t) { const p = frontPicture(t.art.pictures); cands.push({ size: p.len, sig: p.sig, blob: () => picBlob(t.file, p) }); }
+  if (!cands.length) return null;
+  cands.sort((a, b) => a.size - b.size);
+  const key = scanCache.prefix + album.path;
+  const saved = await dbReq('thumbs', 'readonly', s => s.get(key));
+  if (saved && cands.some(c => c.sig === saved.sig)) return URL.createObjectURL(saved.blob);
+  return thumbSlot(async () => {
+    for (const c of cands) {
+      try {
+        const bmp = await decodeImage(c.blob());
+        const cv = new OffscreenCanvas(128, 128);
+        const ctx = cv.getContext('2d'); ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(bmp, 0, 0, 128, 128);
+        const blob = await cv.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+        dbReq('thumbs', 'readwrite', s => s.put({ key, sig: c.sig, blob }));
+        return URL.createObjectURL(blob);
+      } catch {}
+    }
+    return null;
+  });
+}
+function loadThumb(album, img) { thumbFor(album).then(url => { if (url) img.src = url; }); }
 
 function render() {
   if (!state.root) return;
@@ -827,8 +984,8 @@ async function fixAll() {
 async function refreshAlbum(a) {
   const l = await listDir(a.dir);
   a.tracks = l.audio; a.images = l.images;
-  await inspectAlbum(a);
-  thumbCache.delete(a.path);
+  await inspectAlbum(a, null, true);
+  thumbUrls.delete(a.path);
 }
 async function deleteAlbum(a) {
   if (!cardWritable()) return;
@@ -905,7 +1062,7 @@ init();
 
 // Hooks for automated tests (harmless in normal use).
 window.AP30 = { parseFlac, parseId3, rebuildFlac, rebuildMp3, readTrackArt, probeImage, encodeCover, chooseCover,
-  inspectAlbum, fixAlbum, importFolder, scanCard, detectFormat, listDir, useCard, settings, state };
+  inspectAlbum, fixAlbum, importFolder, scanCard, detectFormat, listDir, useCard, rescan, scanCache, settings, state };
 </script>
 </body>
 </html>
