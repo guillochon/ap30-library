@@ -140,6 +140,7 @@ input[type=number], input[type=text] { font: inherit; padding: 6px 8px; border: 
         <label>Copy new music into this card folder<input id="setDest" type="text" placeholder="(top of the card)"></label>
         <label class="check"><input id="setSkip" type="checkbox"> Skip tracks already on the card</label>
         <label class="check"><input id="setExtras" type="checkbox"> Also copy other files (.cue, .log, .txt…)</label>
+        <label class="check" title="Tracks tagged explicit (ITUNESADVISORY, EXPLICIT, the iTunes rating, or “(Explicit)” in the title) are not copied"><input id="setNoExplicit" type="checkbox"> Ignore explicit tracks when copying</label>
       </div>
     </details>
   </section>
@@ -181,7 +182,7 @@ const SKIP_DIR = /^(System Volume Information|\$RECYCLE\.BIN)$/i;
 const CANCEL = new Error('cancelled');
 
 // ---------- settings ----------
-const settings = { size: 500, quality: 88, dest: '', skip: true, extras: false };
+const settings = { size: 500, quality: 88, dest: '', skip: true, extras: false, noExplicit: false };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('ap30-settings') || '{}')); } catch {}
 function saveSettings() { try { localStorage.setItem('ap30-settings', JSON.stringify(settings)); } catch {} }
 
@@ -418,6 +419,129 @@ async function rebuildMp3(file, cover) {
   return new Blob([hdr, frames, new Uint8Array(PAD), file.slice(t.audioOffset)], { type: 'audio/mpeg' });
 }
 
+// ---------- explicit-content tags ----------
+// The common ways a track is marked explicit: iTunes' advisory flag (ITUNESADVISORY 1 or 4, the MP4
+// 'rtng' atom), the EXPLICIT / ADVISORY / CONTENTRATING tags some stores and taggers write, and a
+// "(Explicit)" or "[Explicit]" marker at the end of the title.
+const le32 = (b, o) => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
+const utf8 = new TextDecoder();
+const EXPLICIT_TITLE = /[(\[]\s*explicit(\s+(version|lyrics))?\s*[)\]]\s*$/i;
+function explicitFromTags(tags) {
+  for (const [key, value] of tags) {
+    const k = key.toLowerCase().replace(/[\s_-]/g, ''), v = String(value).replace(/﻿/g, '').trim().toLowerCase();
+    if (k === 'itunesadvisory' && ['1', '4', 'explicit'].includes(v)) return `${key}=${v}`;
+    if (['explicit', 'advisory', 'contentrating', 'parentaladvisory'].includes(k) && ['1', 'true', 'yes', 'explicit', 'e'].includes(v)) return `${key}=${v}`;
+    if (k === 'title' && EXPLICIT_TITLE.test(v)) return 'title says Explicit';
+  }
+  return null;
+}
+// Vorbis comments (FLAC, Ogg): vendor string, then "KEY=value" entries, all lengths little-endian.
+function vorbisComments(b) {
+  const tags = [];
+  if (b.length < 8) return tags;
+  let o = 4 + le32(b, 0);
+  if (o + 4 > b.length) return tags;
+  const n = le32(b, o); o += 4;
+  for (let i = 0; i < n && o + 4 <= b.length; i++) {
+    const len = le32(b, o); o += 4;
+    if (o + len > b.length) break;
+    const s = utf8.decode(b.subarray(o, o + len)); o += len;
+    const eq = s.indexOf('=');
+    if (eq > 0) tags.push([s.slice(0, eq), s.slice(eq + 1)]);
+  }
+  return tags;
+}
+function id3Text(b) {
+  const enc = b[0];
+  return new TextDecoder(enc === 0 ? 'latin1' : enc === 1 ? 'utf-16' : enc === 2 ? 'utf-16be' : 'utf-8').decode(b.subarray(1)).replace(/﻿/g, '');
+}
+async function id3Tags(file) {
+  const r = new Reader(file);
+  const h = await r.bytes(0, 10);
+  if (ascii(h, 0, 3) !== 'ID3') return [];
+  const ver = h[3], flags = h[5], end = 10 + syncsafe(h, 6);
+  if (ver < 3 || ver > 4 || (flags & 0x80)) return [];
+  let i = 10;
+  if (flags & 0x40) { const e = await r.bytes(10, 4); i += ver === 3 ? u32(e, 0) + 4 : syncsafe(e, 0); }
+  const tags = [];
+  while (i + 10 <= end) {
+    const fh = await r.bytes(i, 10), id = ascii(fh, 0, 4);
+    if (!/^[A-Z0-9]{4}$/.test(id)) break;
+    const fsz = ver === 4 ? syncsafe(fh, 4) : u32(fh, 4), fflags = (fh[8] << 8) | fh[9];
+    if (i + 10 + fsz > end) break;
+    const plain = !(ver === 3 ? (fflags & 0x00c0) : (fflags & 0x000f));
+    if (plain && fsz && fsz < 65536 && (id === 'TXXX' || id === 'TIT2')) {
+      const text = id3Text(await r.bytes(i + 10, fsz)).split('\0');
+      if (id === 'TIT2') tags.push(['TITLE', text[0]]);
+      else tags.push([text[0], text.slice(1).find(s => s) || '']);
+    }
+    i += 10 + fsz;
+  }
+  return tags;
+}
+// MP4 boxes between start and end: [{ type, start (of the contents), end }].
+async function mp4Boxes(r, start, end) {
+  const out = [];
+  for (let o = start; o + 8 <= end;) {
+    const h = await r.bytes(o, 8);
+    let size = u32(h, 0), hl = 8;
+    if (size === 1) { const x = await r.bytes(o + 8, 8); size = u32(x, 0) * 2 ** 32 + u32(x, 4); hl = 16; }
+    else if (size === 0) size = end - o;
+    if (size < hl || o + size > end) break;
+    out.push({ type: ascii(h, 4, 4), start: o + hl, end: o + size });
+    o += size;
+  }
+  return out;
+}
+async function mp4Tags(file) {
+  const r = new Reader(file);
+  const find = async (box, type) => (await mp4Boxes(r, box.start, box.end)).find(b => b.type === type);
+  const moov = (await mp4Boxes(r, 0, file.size)).find(b => b.type === 'moov');
+  const udta = moov && await find(moov, 'udta');
+  const meta = udta && await find(udta, 'meta');
+  if (!meta) return [];
+  // iTunes' meta box has a 4-byte version/flags field before its children; QuickTime's does not.
+  const inner = { start: ascii(await r.bytes(meta.start + 4, 4), 0, 4) === 'hdlr' ? meta.start : meta.start + 4, end: meta.end };
+  const ilst = await find(inner, 'ilst');
+  if (!ilst) return [];
+  const tags = [];
+  for (const item of await mp4Boxes(r, ilst.start, ilst.end)) {
+    if (!['rtng', '----', '\xa9nam'].includes(item.type) || item.end - item.start > 65536) continue;
+    let name = item.type, value = null;
+    for (const c of await mp4Boxes(r, item.start, item.end)) {
+      const b = await r.bytes(c.start, c.end - c.start);
+      if (c.type === 'name') name = utf8.decode(b.subarray(4));
+      if (c.type === 'data' && b.length > 8) value = item.type === 'rtng' ? String(b[8]) : utf8.decode(b.subarray(8));
+    }
+    if (value == null) continue;
+    tags.push([item.type === 'rtng' ? 'ITUNESADVISORY' : item.type === '\xa9nam' ? 'TITLE' : name, value]);
+  }
+  return tags;
+}
+async function oggTags(file) {
+  const b = await readBytes(file, 0, Math.min(file.size, 65536));
+  for (const magic of ['\x03vorbis', 'OpusTags']) {
+    const m = latin1Bytes(magic);
+    for (let i = 0; i + m.length <= b.length; i++) {
+      if (m.every((x, j) => b[i + j] === x)) return vorbisComments(b.subarray(i + m.length));
+    }
+  }
+  return [];
+}
+// Returns why a track counts as explicit, or null. Formats without readable tags count as not explicit.
+async function explicitMark(file, ext) {
+  try {
+    let tags = [];
+    if (ext === 'flac') {
+      const p = await parseFlac(file);
+      for (const blk of p.blocks) if (blk.type === 4) tags.push(...vorbisComments(await p.reader.bytes(blk.start, blk.len)));
+    } else if (ext === 'mp3') tags = await id3Tags(file);
+    else if (ext === 'm4a' || ext === 'alac' || ext === 'aac') tags = await mp4Tags(file);
+    else if (ext === 'ogg' || ext === 'opus') tags = await oggTags(file);
+    return explicitFromTags(tags);
+  } catch { return null; }
+}
+
 // ---------- reading what's in an album ----------
 async function readTrackArt(file, ext) {
   try {
@@ -647,15 +771,28 @@ async function entryExists(dir, name) {
 }
 // Mirrors src (a folder picked on the computer) into destParent/src.name, fixing covers on the way.
 async function importFolder(src, destParent, tick) {
-  const stats = { copied: 0, skipped: 0, albums: 0 };
+  const stats = { copied: 0, skipped: 0, albums: 0, explicit: 0 };
   async function copyDir(srcDir, makeDest, path) {
     checkCancel();
     const l = await listDir(srcDir);
     let dest = null;
     const getDest = async () => dest || (dest = await makeDest());
-    if (l.audio.length) {
+    let tracks = l.audio;
+    if (settings.noExplicit && tracks.length) {
+      setJob(`Checking ${path} for explicit tracks`);
+      const marks = new Array(tracks.length);
+      await pool(tracks, 4, async (t, k) => { checkCancel(); marks[k] = await explicitMark(await t.handle.getFile(), t.ext); });
+      const dropped = tracks.filter((t, k) => marks[k]);
+      if (dropped.length) {
+        dropped.forEach(t => tick(t, true));
+        stats.explicit += dropped.length;
+        log(`${path}: left out ${dropped.length} explicit track${dropped.length > 1 ? 's' : ''} (${dropped.map(t => t.name).join(', ')})`);
+        tracks = tracks.filter((t, k) => !marks[k]);
+      }
+    }
+    if (tracks.length) {
       stats.albums++;
-      const album = { name: path, dir: srcDir, tracks: l.audio, images: l.images };
+      const album = { name: path, dir: srcDir, tracks, images: l.images };
       setJob(`Reading ${path}`);
       await inspectAlbum(album);
       const cover = await chooseCover(album);
@@ -1025,7 +1162,7 @@ async function addMusic() {
     if (!total) { log(`No music files in ${src.name}.`, 'bad'); return; }
     setBar(total);
     const s = await importFolder(src, dest, (t, skipped) => { setBar(null); setJob(`${skipped ? 'Skipping' : 'Copying'} ${t.name}`); });
-    log(`Added ${src.name}: ${s.copied} tracks copied${s.skipped ? `, ${s.skipped} already on the card` : ''}, ${s.albums} albums.`, 'ok');
+    log(`Added ${src.name}: ${s.copied} tracks copied${s.skipped ? `, ${s.skipped} already on the card` : ''}${s.explicit ? `, ${s.explicit} explicit left out` : ''}, ${s.albums} albums.`, 'ok');
     await rescan();
   });
 }
@@ -1041,6 +1178,7 @@ function initSettings() {
   bind('setDest', 'dest', v => v.trim());
   bind('setSkip', 'skip', Boolean, 'checked');
   bind('setExtras', 'extras', Boolean, 'checked');
+  bind('setNoExplicit', 'noExplicit', Boolean, 'checked');
 }
 async function init() {
   initSettings();
@@ -1065,7 +1203,7 @@ init();
 
 // Hooks for automated tests (harmless in normal use).
 window.AP30 = { parseFlac, parseId3, rebuildFlac, rebuildMp3, readTrackArt, probeImage, encodeCover, chooseCover,
-  inspectAlbum, fixAlbum, importFolder, scanCard, detectFormat, listDir, useCard, rescan, scanCache, settings, state };
+  inspectAlbum, fixAlbum, importFolder, explicitMark, scanCard, detectFormat, listDir, useCard, rescan, scanCache, settings, state };
 </script>
 </body>
 </html>
